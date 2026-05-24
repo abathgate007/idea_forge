@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import re
+import json
 import sqlite3
 from typing import Protocol
 
@@ -31,7 +31,32 @@ class GeneratedIdea:
 
     id: int
     title: str
+    summary: str
+    target_buyer: str
+    first_validation_step: str
+    why_it_fits: str
     body: str
+
+
+@dataclass(frozen=True)
+class ParsedIdea:
+    """A structured generated idea ready for persistence."""
+
+    title: str
+    summary: str
+    target_buyer: str
+    first_validation_step: str
+    why_it_fits: str
+
+    @property
+    def body(self) -> str:
+        parts = [
+            self.summary,
+            f"Target buyer: {self.target_buyer}",
+            f"First validation step: {self.first_validation_step}",
+            f"Why it fits: {self.why_it_fits}",
+        ]
+        return "\n".join(part for part in parts if part.strip())
 
 
 @dataclass(frozen=True)
@@ -111,9 +136,9 @@ def generate_and_store_ideas(
             portfolio_id=portfolio_id,
             idea_agent_id=idea_agent_id,
             creative_technique_id=creative_technique_id,
-            idea_text=idea_text,
+            idea=idea,
         )
-        for idea_text in parsed_ideas
+        for idea in parsed_ideas
     )
     _mark_generation_completed(connection, run_id, raw_output)
     connection.commit()
@@ -126,30 +151,50 @@ def generate_and_store_ideas(
     )
 
 
-def parse_generated_ideas(raw_output: str) -> tuple[str, ...]:
-    """Parse simple list-like model output, falling back to the full raw text."""
+def parse_generated_ideas(raw_output: str) -> tuple[ParsedIdea, ...]:
+    """Parse structured JSON model output, falling back to one raw-output idea."""
     clean_output = raw_output.strip()
     if not clean_output:
-        return ("",)
+        return (_fallback_idea(""),)
 
-    candidates = []
-    marked_lines = 0
-    for line in clean_output.splitlines():
-        line = line.strip()
-        if not line:
-            continue
+    try:
+        payload = json.loads(clean_output)
+    except json.JSONDecodeError:
+        return (_fallback_idea(clean_output),)
 
-        stripped = re.sub(r"^\s*(?:[-*]|\d+[.)])\s+", "", line).strip()
-        if stripped != line:
-            marked_lines += 1
+    ideas = payload.get("ideas") if isinstance(payload, dict) else None
+    if not isinstance(ideas, list):
+        return (_fallback_idea(clean_output),)
 
-        if stripped:
-            candidates.append(stripped)
+    parsed_ideas = []
+    for item in ideas:
+        if not isinstance(item, dict):
+            return (_fallback_idea(clean_output),)
 
-    if marked_lines > 0:
-        return tuple(candidates)
+        parsed_idea = ParsedIdea(
+            title=_clean_field(item.get("title")),
+            summary=_clean_field(item.get("summary")),
+            target_buyer=_clean_field(item.get("target_buyer")),
+            first_validation_step=_clean_field(item.get("first_validation_step")),
+            why_it_fits=_clean_field(item.get("why_it_fits")),
+        )
+        if not all(
+            (
+                parsed_idea.title,
+                parsed_idea.summary,
+                parsed_idea.target_buyer,
+                parsed_idea.first_validation_step,
+                parsed_idea.why_it_fits,
+            )
+        ):
+            return (_fallback_idea(clean_output),)
 
-    return (clean_output,)
+        parsed_ideas.append(parsed_idea)
+
+    if not parsed_ideas:
+        return (_fallback_idea(clean_output),)
+
+    return tuple(parsed_ideas)
 
 
 def list_ideas(connection: sqlite3.Connection) -> list[sqlite3.Row]:
@@ -159,6 +204,10 @@ def list_ideas(connection: sqlite3.Connection) -> list[sqlite3.Row]:
         SELECT
             ideas.id,
             ideas.title,
+            ideas.summary,
+            ideas.target_buyer,
+            ideas.first_validation_step,
+            ideas.why_it_fits,
             ideas.body,
             ideas.created_at,
             portfolios.name AS portfolio_name,
@@ -297,9 +346,8 @@ def _insert_idea(
     portfolio_id: int,
     idea_agent_id: int,
     creative_technique_id: int,
-    idea_text: str,
+    idea: ParsedIdea,
 ) -> GeneratedIdea:
-    title = _title_from_text(idea_text)
     cursor = connection.execute(
         """
         INSERT INTO ideas (
@@ -309,9 +357,13 @@ def _insert_idea(
             idea_agent_id,
             creative_technique_id,
             title,
+            summary,
+            target_buyer,
+            first_validation_step,
+            why_it_fits,
             body
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             run_id,
@@ -319,11 +371,23 @@ def _insert_idea(
             portfolio_id,
             idea_agent_id,
             creative_technique_id,
-            title,
-            idea_text,
+            idea.title,
+            idea.summary,
+            idea.target_buyer,
+            idea.first_validation_step,
+            idea.why_it_fits,
+            idea.body,
         ),
     )
-    return GeneratedIdea(id=int(cursor.lastrowid), title=title, body=idea_text)
+    return GeneratedIdea(
+        id=int(cursor.lastrowid),
+        title=idea.title,
+        summary=idea.summary,
+        target_buyer=idea.target_buyer,
+        first_validation_step=idea.first_validation_step,
+        why_it_fits=idea.why_it_fits,
+        body=idea.body,
+    )
 
 
 def _title_from_text(text: str) -> str:
@@ -332,3 +396,20 @@ def _title_from_text(text: str) -> str:
         return "Untitled idea"
 
     return first_line[:80]
+
+
+def _clean_field(value: object) -> str:
+    if not isinstance(value, str):
+        return ""
+
+    return value.strip()
+
+
+def _fallback_idea(raw_output: str) -> ParsedIdea:
+    return ParsedIdea(
+        title="Unparsed model output",
+        summary=raw_output,
+        target_buyer="",
+        first_validation_step="",
+        why_it_fits="",
+    )

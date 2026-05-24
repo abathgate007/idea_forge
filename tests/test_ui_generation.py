@@ -1,4 +1,5 @@
 from fastapi.testclient import TestClient
+import json
 
 from idea_forge.app import create_app
 from idea_forge.database import open_database
@@ -12,7 +13,19 @@ class FakeOllamaClient:
 
     def generate(self, prompt: str) -> str:
         self.prompts.append(prompt)
-        return "1. Stored UI idea"
+        return json.dumps(
+            {
+                "ideas": [
+                    {
+                        "title": "Stored UI idea",
+                        "summary": "A structured idea shown from the generate response.",
+                        "target_buyer": "Local operators",
+                        "first_validation_step": "Ask three operators if they want it.",
+                        "why_it_fits": "It matches the selected seed and portfolio.",
+                    }
+                ]
+            }
+        )
 
 
 def first_id(database_path, table_name: str) -> int:
@@ -62,17 +75,31 @@ def test_submitting_generate_form_uses_fake_client_and_stores_result(tmp_path) -
 
     assert response.status_code == 200
     assert "Stored UI idea" in response.text
+    assert "A structured idea shown from the generate response." in response.text
+    assert "Target buyer" in response.text
+    assert "Local operators" in response.text
+    assert "First validation step" in response.text
+    assert "Why it fits" in response.text
     assert fake_client.prompts
     assert "Manual generation through the local UI" in fake_client.prompts[0]
 
     with open_database(database_path) as connection:
-        idea = connection.execute("SELECT body FROM ideas").fetchone()
+        idea = connection.execute(
+            """
+            SELECT title, summary, target_buyer, first_validation_step, why_it_fits
+            FROM ideas
+            """
+        ).fetchone()
         run = connection.execute(
             "SELECT status, model_name, raw_output FROM generation_runs"
         ).fetchone()
 
-    assert idea["body"] == "Stored UI idea"
+    assert idea["title"] == "Stored UI idea"
+    assert idea["summary"] == "A structured idea shown from the generate response."
+    assert idea["target_buyer"] == "Local operators"
+    assert idea["first_validation_step"] == "Ask three operators if they want it."
+    assert idea["why_it_fits"] == "It matches the selected seed and portfolio."
     assert run["status"] == "completed"
     assert run["model_name"] == "fake-ui-model"
-    assert run["raw_output"] == "1. Stored UI idea"
+    assert "Stored UI idea" in run["raw_output"]
     assert generation_run_count(database_path) == 1

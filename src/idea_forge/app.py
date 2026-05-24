@@ -227,7 +227,7 @@ def create_app(
             f"""
             <article class="idea-card">
                 <h3>{escape(idea["title"])}</h3>
-                <p>{escape(idea["body"])}</p>
+                {_idea_body_html(idea)}
                 <p class="meta">
                     {escape(idea["portfolio_name"] or "")} /
                     {escape(idea["idea_agent_name"] or "")} /
@@ -283,7 +283,7 @@ def create_app(
             f"""
             <article class="idea-card">
                 <h3>{escape(idea["title"])}</h3>
-                <p>{escape(idea["body"])}</p>
+                {_idea_body_html(idea)}
                 <p class="meta">
                     {escape(idea["portfolio_name"] or "")} /
                     {escape(idea["idea_agent_name"] or "")} /
@@ -382,7 +382,7 @@ def create_app(
             f"""
             <article class="idea-card">
                 <h3>{escape(idea.title)}</h3>
-                <p>{escape(idea.body)}</p>
+                {_generated_idea_body_html(idea)}
             </article>
             """
             for idea in result.ideas
@@ -428,6 +428,44 @@ def _critique_html(critique: sqlite3.Row | None) -> str:
         <p>{escape(raw_preview)}</p>
     </section>
     """
+
+
+def _idea_body_html(idea: sqlite3.Row) -> str:
+    return _structured_idea_html(
+        summary=idea["summary"] or idea["body"],
+        target_buyer=idea["target_buyer"],
+        first_validation_step=idea["first_validation_step"],
+        why_it_fits=idea["why_it_fits"],
+    )
+
+
+def _generated_idea_body_html(idea) -> str:
+    return _structured_idea_html(
+        summary=idea.summary or idea.body,
+        target_buyer=idea.target_buyer,
+        first_validation_step=idea.first_validation_step,
+        why_it_fits=idea.why_it_fits,
+    )
+
+
+def _structured_idea_html(
+    *,
+    summary: str,
+    target_buyer: str,
+    first_validation_step: str,
+    why_it_fits: str,
+) -> str:
+    fields = [
+        ("Summary", summary),
+        ("Target buyer", target_buyer),
+        ("First validation step", first_validation_step),
+        ("Why it fits", why_it_fits),
+    ]
+    return "\n".join(
+        f"<p><strong>{label}:</strong> {escape(value)}</p>"
+        for label, value in fields
+        if value.strip()
+    )
 
 
 app = create_app()

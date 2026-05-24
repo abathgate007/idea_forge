@@ -63,6 +63,10 @@ CREATE TABLE IF NOT EXISTS ideas (
     idea_agent_id INTEGER,
     creative_technique_id INTEGER,
     title TEXT NOT NULL,
+    summary TEXT NOT NULL DEFAULT '',
+    target_buyer TEXT NOT NULL DEFAULT '',
+    first_validation_step TEXT NOT NULL DEFAULT '',
+    why_it_fits TEXT NOT NULL DEFAULT '',
     body TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -199,6 +203,7 @@ def initialize_schema(connection: sqlite3.Connection) -> None:
     """Create the MVP database schema if it does not already exist."""
     connection.executescript(DATABASE_SCHEMA)
     _ensure_generation_run_metadata_columns(connection)
+    _ensure_structured_idea_columns(connection)
     connection.commit()
 
 
@@ -237,4 +242,23 @@ def _ensure_generation_run_metadata_columns(connection: sqlite3.Connection) -> N
         if column_name not in existing_columns:
             connection.execute(
                 f"ALTER TABLE generation_runs ADD COLUMN {column_name} {column_definition}"
+            )
+
+
+def _ensure_structured_idea_columns(connection: sqlite3.Connection) -> None:
+    """Add structured idea columns to databases created by earlier milestones."""
+    existing_columns = {
+        row["name"] for row in connection.execute("PRAGMA table_info(ideas)").fetchall()
+    }
+    required_columns = {
+        "summary": "TEXT NOT NULL DEFAULT ''",
+        "target_buyer": "TEXT NOT NULL DEFAULT ''",
+        "first_validation_step": "TEXT NOT NULL DEFAULT ''",
+        "why_it_fits": "TEXT NOT NULL DEFAULT ''",
+    }
+
+    for column_name, column_definition in required_columns.items():
+        if column_name not in existing_columns:
+            connection.execute(
+                f"ALTER TABLE ideas ADD COLUMN {column_name} {column_definition}"
             )
