@@ -60,6 +60,18 @@ Run tests:
 python -m pytest
 ```
 
+Run the local FastAPI app:
+
+```powershell
+uvicorn idea_forge.app:app --reload
+```
+
+Health check:
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8000/health
+```
+
 ## Repository Control Docs
 
 - `AGENTS.md`: Codex operating rules
