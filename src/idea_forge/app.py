@@ -1,16 +1,25 @@
 """FastAPI application entrypoint."""
 
 from html import escape
+from pathlib import Path
+from urllib.parse import parse_qs
+import sqlite3
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
 
-from idea_forge.database import (
-    DEFAULT_CREATIVE_TECHNIQUES,
-    DEFAULT_IDEA_AGENTS,
-    DEFAULT_PORTFOLIOS,
+from idea_forge.database import initialize_database, open_database
+from idea_forge.idea_generation import (
+    IdeaGenerationClient,
+    generate_and_store_ideas,
+    list_ideas,
+    list_reference_rows,
 )
+from idea_forge.ollama_client import OllamaClient
+from idea_forge.prompts import PromptRenderer
 
+
+DEFAULT_DATABASE_PATH = Path("data") / "idea_forge.sqlite"
 
 BASE_STYLES = """
 body {
@@ -37,13 +46,29 @@ nav a {
 .actions {
     margin-top: 24px;
 }
-.button {
+.button, button {
     background: #0b57d0;
     border-radius: 4px;
     color: #fff;
     display: inline-block;
     padding: 10px 14px;
     text-decoration: none;
+}
+.idea-list {
+    display: grid;
+    gap: 14px;
+}
+.idea-card {
+    border: 1px solid #d9dce1;
+    border-radius: 6px;
+    padding: 16px;
+}
+.idea-card h3 {
+    margin-top: 0;
+}
+.meta {
+    color: #5f6368;
+    font-size: 0.92rem;
 }
 form {
     display: grid;
@@ -65,12 +90,8 @@ textarea {
     min-height: 120px;
 }
 button {
-    background: #5f6368;
     border: 0;
-    border-radius: 4px;
-    color: #fff;
     font: inherit;
-    padding: 10px 14px;
     width: fit-content;
 }
 .empty {
@@ -81,7 +102,7 @@ button {
 """
 
 
-def page(title: str, body: str) -> HTMLResponse:
+def page(title: str, body: str, status_code: int = 200) -> HTMLResponse:
     """Render a small full-page HTML response."""
     html = f"""<!doctype html>
 <html lang="en">
@@ -105,20 +126,41 @@ def page(title: str, body: str) -> HTMLResponse:
     </main>
 </body>
 </html>"""
-    return HTMLResponse(html)
+    return HTMLResponse(html, status_code=status_code)
 
 
-def options(items: tuple[tuple[str, str], ...]) -> str:
-    """Render option tags for reference data tuples."""
+def options(items: list[sqlite3.Row]) -> str:
+    """Render option tags for reference data rows."""
     return "\n".join(
-        f'            <option value="{escape(name)}">{escape(name)}</option>'
-        for name, _description in items
+        f'            <option value="{item["id"]}">{escape(item["name"])}</option>'
+        for item in items
     )
 
 
-def create_app() -> FastAPI:
+def create_app(
+    *,
+    database_path: str | Path = DEFAULT_DATABASE_PATH,
+    ollama_client: IdeaGenerationClient | None = None,
+    prompt_renderer: PromptRenderer | None = None,
+) -> FastAPI:
     """Create the Idea Forge FastAPI application."""
     app = FastAPI(title="Idea Forge")
+    app.state.ollama_client = ollama_client
+    app.state.prompt_renderer = prompt_renderer
+
+    def open_app_database() -> sqlite3.Connection:
+        if database_path != ":memory:":
+            Path(database_path).parent.mkdir(parents=True, exist_ok=True)
+
+        connection = open_database(database_path)
+        initialize_database(connection)
+        return connection
+
+    def generation_client() -> IdeaGenerationClient:
+        if app.state.ollama_client is not None:
+            return app.state.ollama_client
+
+        return OllamaClient.from_environment()
 
     @app.get("/health")
     def health() -> dict[str, str]:
@@ -130,8 +172,7 @@ def create_app() -> FastAPI:
             "Home",
             """
             <h2>Local idea foundry</h2>
-            <p class="muted">Capture seeds, browse stored ideas, and prepare generation inputs.</p>
-            <p class="muted">Ollama generation and critic scoring are not wired in yet.</p>
+            <p class="muted">Capture seeds, generate ideas through local Ollama, and browse stored ideas.</p>
             <p class="actions">
                 <a class="button" href="/ideas/generate">Open generate form</a>
             </p>
@@ -139,54 +180,147 @@ def create_app() -> FastAPI:
         )
 
     @app.get("/ideas", response_class=HTMLResponse)
-    def list_ideas() -> HTMLResponse:
+    def list_ideas_page() -> HTMLResponse:
+        with open_app_database() as connection:
+            ideas = list_ideas(connection)
+
+        if not ideas:
+            return page(
+                "Ideas",
+                """
+                <h2>Ideas</h2>
+                <section class="empty" aria-label="No ideas">
+                    <p>No ideas have been generated or stored yet.</p>
+                    <p class="muted">Use the generate form to create the first stored idea.</p>
+                </section>
+                """,
+            )
+
+        ideas_html = "\n".join(
+            f"""
+            <article class="idea-card">
+                <h3>{escape(idea["title"])}</h3>
+                <p>{escape(idea["body"])}</p>
+                <p class="meta">
+                    {escape(idea["portfolio_name"] or "")} /
+                    {escape(idea["idea_agent_name"] or "")} /
+                    {escape(idea["creative_technique_name"] or "")}
+                </p>
+            </article>
+            """
+            for idea in ideas
+        )
         return page(
             "Ideas",
-            """
+            f"""
             <h2>Ideas</h2>
-            <section class="empty" aria-label="No ideas">
-                <p>No ideas have been generated or stored yet.</p>
-                <p class="muted">Idea persistence will be connected in a later milestone.</p>
+            <section class="idea-list" aria-label="Stored ideas">
+{ideas_html}
             </section>
             """,
         )
 
     @app.get("/ideas/generate", response_class=HTMLResponse)
     def generate_idea_form() -> HTMLResponse:
+        with open_app_database() as connection:
+            portfolios = list_reference_rows(connection, "portfolios")
+            idea_agents = list_reference_rows(connection, "idea_agents")
+            creative_techniques = list_reference_rows(connection, "creative_techniques")
+
         return page(
             "Generate Idea",
             f"""
             <h2>Generate idea</h2>
-            <p class="muted">This form is a shell only. It does not call Ollama or store ideas.</p>
-            <form method="get" action="/ideas/generate">
+            <form method="post" action="/ideas/generate">
                 <label>
                     Seed
-                    <textarea name="seed" placeholder="Describe the starting point"></textarea>
+                    <textarea name="seed_text" placeholder="Describe the starting point" required></textarea>
                 </label>
                 <label>
                     Portfolio
-                    <select name="portfolio">
-{options(DEFAULT_PORTFOLIOS)}
+                    <select name="portfolio_id">
+{options(portfolios)}
                     </select>
                 </label>
                 <label>
                     Idea agent
-                    <select name="idea_agent">
-{options(DEFAULT_IDEA_AGENTS)}
+                    <select name="idea_agent_id">
+{options(idea_agents)}
                     </select>
                 </label>
                 <label>
                     Creative technique
-                    <select name="creative_technique">
-{options(DEFAULT_CREATIVE_TECHNIQUES)}
+                    <select name="creative_technique_id">
+{options(creative_techniques)}
                     </select>
                 </label>
-                <button type="submit" disabled>Generation not available yet</button>
+                <button type="submit">Generate ideas</button>
             </form>
             """,
         )
 
+    @app.post("/ideas/generate", response_class=HTMLResponse)
+    async def submit_generate_idea_form(request: Request) -> HTMLResponse:
+        try:
+            form = parse_qs((await request.body()).decode("utf-8"))
+            seed_text = _form_value(form, "seed_text")
+            portfolio_id = int(_form_value(form, "portfolio_id"))
+            idea_agent_id = int(_form_value(form, "idea_agent_id"))
+            creative_technique_id = int(_form_value(form, "creative_technique_id"))
+            with open_app_database() as connection:
+                result = generate_and_store_ideas(
+                    connection,
+                    seed_text=seed_text,
+                    portfolio_id=portfolio_id,
+                    idea_agent_id=idea_agent_id,
+                    creative_technique_id=creative_technique_id,
+                    client=generation_client(),
+                    prompt_renderer=app.state.prompt_renderer,
+                )
+        except Exception as error:
+            return page(
+                "Generate Idea",
+                f"""
+                <h2>Generate idea</h2>
+                <section class="empty" aria-label="Generation failed">
+                    <p>Generation failed.</p>
+                    <p class="muted">{escape(str(error))}</p>
+                </section>
+                <p class="actions"><a class="button" href="/ideas/generate">Try again</a></p>
+                """,
+                status_code=500,
+            )
+
+        ideas_html = "\n".join(
+            f"""
+            <article class="idea-card">
+                <h3>{escape(idea.title)}</h3>
+                <p>{escape(idea.body)}</p>
+            </article>
+            """
+            for idea in result.ideas
+        )
+        return page(
+            "Generated Ideas",
+            f"""
+            <h2>Generated ideas</h2>
+            <p class="meta">Generation run #{result.run_id}</p>
+            <section class="idea-list" aria-label="Generated ideas">
+{ideas_html}
+            </section>
+            <p class="actions"><a class="button" href="/ideas">View stored ideas</a></p>
+            """,
+        )
+
     return app
+
+
+def _form_value(form: dict[str, list[str]], name: str) -> str:
+    value = form.get(name, [""])[0].strip()
+    if not value:
+        raise ValueError(f"Missing form field: {name}")
+
+    return value
 
 
 app = create_app()

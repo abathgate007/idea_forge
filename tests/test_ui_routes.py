@@ -21,7 +21,7 @@ def test_home_page_renders_navigation() -> None:
 
 
 def test_list_ideas_page_renders_empty_state_without_database() -> None:
-    client = TestClient(create_app())
+    client = TestClient(create_app(database_path=":memory:"))
 
     response = client.get("/ideas")
 
@@ -30,16 +30,16 @@ def test_list_ideas_page_renders_empty_state_without_database() -> None:
 
 
 def test_generate_idea_form_shell_renders_reference_options() -> None:
-    client = TestClient(create_app())
+    client = TestClient(create_app(database_path=":memory:"))
 
     response = client.get("/ideas/generate")
 
     assert response.status_code == 200
-    assert '<textarea name="seed"' in response.text
-    assert 'select name="portfolio"' in response.text
-    assert 'select name="idea_agent"' in response.text
-    assert 'select name="creative_technique"' in response.text
+    assert '<textarea name="seed_text"' in response.text
+    assert 'select name="portfolio_id"' in response.text
+    assert 'select name="idea_agent_id"' in response.text
+    assert 'select name="creative_technique_id"' in response.text
     assert DEFAULT_PORTFOLIOS[0][0] in response.text
     assert DEFAULT_IDEA_AGENTS[0][0] in response.text
     assert DEFAULT_CREATIVE_TECHNIQUES[0][0] in response.text
-    assert "Generation not available yet" in response.text
+    assert "Generate ideas" in response.text

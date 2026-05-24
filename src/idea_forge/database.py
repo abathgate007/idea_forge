@@ -43,6 +43,10 @@ CREATE TABLE IF NOT EXISTS generation_runs (
     idea_agent_id INTEGER,
     creative_technique_id INTEGER,
     novelty_mode TEXT NOT NULL DEFAULT '',
+    model_name TEXT NOT NULL DEFAULT '',
+    prompt_text TEXT NOT NULL DEFAULT '',
+    raw_output TEXT NOT NULL DEFAULT '',
+    error_message TEXT NOT NULL DEFAULT '',
     status TEXT NOT NULL DEFAULT 'created',
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (seed_id) REFERENCES seeds (id),
@@ -170,6 +174,7 @@ def open_database(database_path: str | Path = ":memory:") -> sqlite3.Connection:
 def initialize_schema(connection: sqlite3.Connection) -> None:
     """Create the MVP database schema if it does not already exist."""
     connection.executescript(DATABASE_SCHEMA)
+    _ensure_generation_run_metadata_columns(connection)
     connection.commit()
 
 
@@ -183,3 +188,29 @@ def load_default_reference_data(connection: sqlite3.Connection) -> None:
         DEFAULT_CREATIVE_TECHNIQUES,
     )
     connection.commit()
+
+
+def initialize_database(connection: sqlite3.Connection) -> None:
+    """Create schema and load required default reference data."""
+    initialize_schema(connection)
+    load_default_reference_data(connection)
+
+
+def _ensure_generation_run_metadata_columns(connection: sqlite3.Connection) -> None:
+    """Add generation metadata columns to databases created by earlier milestones."""
+    existing_columns = {
+        row["name"]
+        for row in connection.execute("PRAGMA table_info(generation_runs)").fetchall()
+    }
+    required_columns = {
+        "model_name": "TEXT NOT NULL DEFAULT ''",
+        "prompt_text": "TEXT NOT NULL DEFAULT ''",
+        "raw_output": "TEXT NOT NULL DEFAULT ''",
+        "error_message": "TEXT NOT NULL DEFAULT ''",
+    }
+
+    for column_name, column_definition in required_columns.items():
+        if column_name not in existing_columns:
+            connection.execute(
+                f"ALTER TABLE generation_runs ADD COLUMN {column_name} {column_definition}"
+            )
