@@ -70,6 +70,28 @@ text = client.generate("Give me one concrete local-first product idea.")
 
 Tests use fakes and do not require Ollama to be installed or running.
 
+## Prompt Files
+
+Model prompts live in `prompts/` as plain markdown files. Render them with
+explicit variables:
+
+```python
+from idea_forge.prompts import render_prompt
+
+prompt = render_prompt(
+    "idea_generation.md",
+    {
+        "seed": "local business pain",
+        "portfolio": "Money now",
+        "idea_agent": "Money-Hungry Operator",
+        "creative_technique": "Tiny Wedge",
+        "novelty_mode": "practical",
+        "context": "Focus on quick validation.",
+        "anti_sludge_rules": "Avoid generic dashboards.",
+    },
+)
+```
+
 ## Development
 
 Install dependencies once the Python scaffold exists:
