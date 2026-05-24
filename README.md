@@ -13,7 +13,8 @@ It uses:
 
 ## Status
 
-This repository is being scaffolded. The MVP is not complete yet.
+This repository is in MVP development. Manual local idea generation is available
+through the browser UI when Ollama is running.
 
 ## Core Principle
 
@@ -119,6 +120,16 @@ Health check:
 ```powershell
 Invoke-RestMethod http://127.0.0.1:8000/health
 ```
+
+Open the manual generation form at:
+
+```text
+http://127.0.0.1:8000/ideas/generate
+```
+
+The form stores generated ideas and generation run metadata in the local SQLite
+database at `data/idea_forge.sqlite`. Tests use temporary databases and fake
+Ollama clients, so they do not require live Ollama.
 
 ## Repository Control Docs
 
