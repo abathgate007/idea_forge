@@ -72,6 +72,30 @@ CREATE TABLE IF NOT EXISTS ideas (
     FOREIGN KEY (idea_agent_id) REFERENCES idea_agents (id),
     FOREIGN KEY (creative_technique_id) REFERENCES creative_techniques (id)
 );
+
+CREATE TABLE IF NOT EXISTS critiques (
+    id INTEGER PRIMARY KEY,
+    idea_id INTEGER NOT NULL,
+    critic_name TEXT NOT NULL DEFAULT 'Brutal Critic',
+    model_name TEXT NOT NULL DEFAULT '',
+    prompt_text TEXT NOT NULL DEFAULT '',
+    raw_output TEXT NOT NULL DEFAULT '',
+    originality INTEGER,
+    usefulness INTEGER,
+    money_potential INTEGER,
+    time_to_market INTEGER,
+    capital_needed INTEGER,
+    technical_difficulty INTEGER,
+    operational_burden INTEGER,
+    legal_risk INTEGER,
+    reputational_risk INTEGER,
+    personal_fit INTEGER,
+    lifestyle_fit INTEGER,
+    strategic_alignment INTEGER,
+    overall_score INTEGER,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (idea_id) REFERENCES ideas (id) ON DELETE CASCADE
+);
 """
 
 DEFAULT_PORTFOLIOS = (

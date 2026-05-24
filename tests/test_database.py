@@ -10,6 +10,7 @@ EXPECTED_TABLES = {
     "idea_agents",
     "creative_techniques",
     "generation_runs",
+    "critiques",
 }
 
 
@@ -58,3 +59,26 @@ def test_generation_runs_schema_includes_manual_generation_metadata() -> None:
             "raw_output",
             "error_message",
         }.issubset(column_names(connection, "generation_runs"))
+
+
+def test_critiques_schema_includes_score_columns() -> None:
+    with open_database() as connection:
+        initialize_schema(connection)
+
+        assert {
+            "idea_id",
+            "raw_output",
+            "originality",
+            "usefulness",
+            "money_potential",
+            "time_to_market",
+            "capital_needed",
+            "technical_difficulty",
+            "operational_burden",
+            "legal_risk",
+            "reputational_risk",
+            "personal_fit",
+            "lifestyle_fit",
+            "strategic_alignment",
+            "overall_score",
+        }.issubset(column_names(connection, "critiques"))

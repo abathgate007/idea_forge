@@ -8,6 +8,11 @@ import sqlite3
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
 
+from idea_forge.critic import (
+    SCORE_DIMENSIONS,
+    critique_and_store_idea,
+    latest_critiques_by_idea,
+)
 from idea_forge.database import initialize_database, open_database
 from idea_forge.idea_generation import (
     IdeaGenerationClient,
@@ -45,6 +50,9 @@ nav a {
 }
 .actions {
     margin-top: 24px;
+}
+.inline-form {
+    display: inline;
 }
 .button, button {
     background: #0b57d0;
@@ -93,6 +101,24 @@ button {
     border: 0;
     font: inherit;
     width: fit-content;
+}
+.critique {
+    background: #f6f8fb;
+    border-left: 4px solid #0b57d0;
+    margin-top: 14px;
+    padding: 12px;
+}
+.scores {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 8px 0;
+}
+.score {
+    background: #fff;
+    border: 1px solid #d9dce1;
+    border-radius: 4px;
+    padding: 4px 8px;
 }
 .empty {
     border: 1px solid #d9dce1;
@@ -183,6 +209,7 @@ def create_app(
     def list_ideas_page() -> HTMLResponse:
         with open_app_database() as connection:
             ideas = list_ideas(connection)
+            critiques = latest_critiques_by_idea(connection)
 
         if not ideas:
             return page(
@@ -206,6 +233,66 @@ def create_app(
                     {escape(idea["idea_agent_name"] or "")} /
                     {escape(idea["creative_technique_name"] or "")}
                 </p>
+                {_critique_html(critiques.get(idea["id"]))}
+                <form class="inline-form" method="post" action="/ideas/{idea["id"]}/critique">
+                    <button type="submit">Run brutal critique</button>
+                </form>
+            </article>
+            """
+            for idea in ideas
+        )
+        return page(
+            "Ideas",
+            f"""
+            <h2>Ideas</h2>
+            <section class="idea-list" aria-label="Stored ideas">
+{ideas_html}
+            </section>
+            """,
+        )
+
+    @app.post("/ideas/{idea_id}/critique", response_class=HTMLResponse)
+    def submit_critique_idea(idea_id: int) -> HTMLResponse:
+        try:
+            with open_app_database() as connection:
+                critique_and_store_idea(
+                    connection,
+                    idea_id=idea_id,
+                    client=generation_client(),
+                    prompt_renderer=app.state.prompt_renderer,
+                )
+        except Exception as error:
+            return page(
+                "Critique Idea",
+                f"""
+                <h2>Critique idea</h2>
+                <section class="empty" aria-label="Critique failed">
+                    <p>Critique failed.</p>
+                    <p class="muted">{escape(str(error))}</p>
+                </section>
+                <p class="actions"><a class="button" href="/ideas">Back to ideas</a></p>
+                """,
+                status_code=500,
+            )
+
+        with open_app_database() as connection:
+            ideas = list_ideas(connection)
+            critiques = latest_critiques_by_idea(connection)
+
+        ideas_html = "\n".join(
+            f"""
+            <article class="idea-card">
+                <h3>{escape(idea["title"])}</h3>
+                <p>{escape(idea["body"])}</p>
+                <p class="meta">
+                    {escape(idea["portfolio_name"] or "")} /
+                    {escape(idea["idea_agent_name"] or "")} /
+                    {escape(idea["creative_technique_name"] or "")}
+                </p>
+                {_critique_html(critiques.get(idea["id"]))}
+                <form class="inline-form" method="post" action="/ideas/{idea["id"]}/critique">
+                    <button type="submit">Run brutal critique</button>
+                </form>
             </article>
             """
             for idea in ideas
@@ -321,6 +408,26 @@ def _form_value(form: dict[str, list[str]], name: str) -> str:
         raise ValueError(f"Missing form field: {name}")
 
     return value
+
+
+def _critique_html(critique: sqlite3.Row | None) -> str:
+    if critique is None:
+        return ""
+
+    score_items = [
+        f'<span class="score">{escape(name)}: {critique[name]}</span>'
+        for name in SCORE_DIMENSIONS
+        if critique[name] is not None
+    ]
+    scores_html = "".join(score_items)
+    raw_preview = critique["raw_output"].strip()[:500]
+    return f"""
+    <section class="critique" aria-label="Latest critique">
+        <strong>{escape(critique["critic_name"])}</strong>
+        <div class="scores">{scores_html}</div>
+        <p>{escape(raw_preview)}</p>
+    </section>
+    """
 
 
 app = create_app()
