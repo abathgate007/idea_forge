@@ -15,3 +15,6 @@ Review context:
 {context}
 
 Return a structured critique with clear reasons to build, reasons to kill, validation steps, success signals, failure signals, kill criteria, and the next action.
+
+For each evaluation dimension, include one line in this format:
+dimension_name: 0-10
