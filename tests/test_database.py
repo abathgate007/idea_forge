@@ -11,6 +11,7 @@ EXPECTED_TABLES = {
     "creative_techniques",
     "generation_runs",
     "critiques",
+    "feedback_events",
 }
 
 
@@ -94,3 +95,15 @@ def test_critiques_schema_includes_score_columns() -> None:
             "strategic_alignment",
             "overall_score",
         }.issubset(column_names(connection, "critiques"))
+
+
+def test_feedback_events_schema_links_to_ideas() -> None:
+    with open_database() as connection:
+        initialize_schema(connection)
+
+        assert {
+            "idea_id",
+            "action",
+            "reason_chips",
+            "created_at",
+        }.issubset(column_names(connection, "feedback_events"))
