@@ -44,6 +44,32 @@ The MVP will support:
 - Ollama API at `http://localhost:11434`
 - initial model configurable, defaulting to `qwen2.5-coder:7b`
 
+## Ollama Configuration
+
+Idea Forge uses Ollama's local HTTP API through a small client abstraction. The
+defaults are:
+
+- base URL: `http://localhost:11434`
+- model: `qwen2.5-coder:7b`
+
+Override them with environment variables when needed:
+
+```powershell
+$env:IDEA_FORGE_OLLAMA_BASE_URL = "http://localhost:11434"
+$env:IDEA_FORGE_OLLAMA_MODEL = "qwen2.5-coder:7b"
+```
+
+The client can also be configured directly in Python:
+
+```python
+from idea_forge.ollama_client import OllamaClient
+
+client = OllamaClient(base_url="http://localhost:11434", model="qwen2.5-coder:7b")
+text = client.generate("Give me one concrete local-first product idea.")
+```
+
+Tests use fakes and do not require Ollama to be installed or running.
+
 ## Development
 
 Install dependencies once the Python scaffold exists:
