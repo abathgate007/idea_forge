@@ -14,6 +14,13 @@ from idea_forge.critic import (
     latest_critiques_by_idea,
 )
 from idea_forge.database import initialize_database, open_database
+from idea_forge.feedback import (
+    FEEDBACK_ACTIONS,
+    REASON_CHIPS,
+    decode_reason_chips,
+    feedback_events_by_idea,
+    record_feedback,
+)
 from idea_forge.idea_generation import (
     IdeaGenerationClient,
     generate_and_store_ideas,
@@ -120,6 +127,41 @@ button {
     border-radius: 4px;
     padding: 4px 8px;
 }
+.feedback-controls {
+    border-top: 1px solid #e4e7eb;
+    margin-top: 14px;
+    padding-top: 14px;
+}
+.feedback-actions, .chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+.feedback-actions button {
+    background: #174ea6;
+}
+.chip {
+    align-items: center;
+    border: 1px solid #d9dce1;
+    border-radius: 4px;
+    display: inline-flex;
+    font-weight: 400;
+    gap: 6px;
+    padding: 4px 8px;
+}
+.chip input {
+    margin: 0;
+}
+.feedback-events {
+    background: #f8f9fa;
+    border-left: 4px solid #188038;
+    margin-top: 12px;
+    padding: 10px 12px;
+}
+.feedback-events ul {
+    margin: 6px 0 0;
+    padding-left: 20px;
+}
 .empty {
     border: 1px solid #d9dce1;
     border-radius: 6px;
@@ -210,6 +252,7 @@ def create_app(
         with open_app_database() as connection:
             ideas = list_ideas(connection)
             critiques = latest_critiques_by_idea(connection)
+            feedback_events = feedback_events_by_idea(connection)
 
         if not ideas:
             return page(
@@ -223,30 +266,55 @@ def create_app(
                 """,
             )
 
-        ideas_html = "\n".join(
-            f"""
-            <article class="idea-card">
-                <h3>{escape(idea["title"])}</h3>
-                {_idea_body_html(idea)}
-                <p class="meta">
-                    {escape(idea["portfolio_name"] or "")} /
-                    {escape(idea["idea_agent_name"] or "")} /
-                    {escape(idea["creative_technique_name"] or "")}
-                </p>
-                {_critique_html(critiques.get(idea["id"]))}
-                <form class="inline-form" method="post" action="/ideas/{idea["id"]}/critique">
-                    <button type="submit">Run brutal critique</button>
-                </form>
-            </article>
-            """
-            for idea in ideas
-        )
+        ideas_html = _ideas_html(ideas, critiques, feedback_events)
         return page(
             "Ideas",
             f"""
             <h2>Ideas</h2>
             <section class="idea-list" aria-label="Stored ideas">
 {ideas_html}
+            </section>
+            """,
+        )
+
+    @app.post("/ideas/{idea_id}/feedback", response_class=HTMLResponse)
+    async def submit_feedback(idea_id: int, request: Request) -> HTMLResponse:
+        try:
+            form = parse_qs((await request.body()).decode("utf-8"))
+            action = _form_value(form, "action")
+            reason_chips = tuple(reason.strip() for reason in form.get("reason_chips", []))
+            with open_app_database() as connection:
+                record_feedback(
+                    connection,
+                    idea_id=idea_id,
+                    action=action,
+                    reason_chips=reason_chips,
+                )
+        except ValueError as error:
+            return page(
+                "Feedback",
+                f"""
+                <h2>Feedback</h2>
+                <section class="empty" aria-label="Feedback failed">
+                    <p>Feedback was not recorded.</p>
+                    <p class="muted">{escape(str(error))}</p>
+                </section>
+                <p class="actions"><a class="button" href="/ideas">Back to ideas</a></p>
+                """,
+                status_code=400,
+            )
+
+        with open_app_database() as connection:
+            ideas = list_ideas(connection)
+            critiques = latest_critiques_by_idea(connection)
+            feedback_events = feedback_events_by_idea(connection)
+
+        return page(
+            "Ideas",
+            f"""
+            <h2>Ideas</h2>
+            <section class="idea-list" aria-label="Stored ideas">
+{_ideas_html(ideas, critiques, feedback_events)}
             </section>
             """,
         )
@@ -278,25 +346,9 @@ def create_app(
         with open_app_database() as connection:
             ideas = list_ideas(connection)
             critiques = latest_critiques_by_idea(connection)
+            feedback_events = feedback_events_by_idea(connection)
 
-        ideas_html = "\n".join(
-            f"""
-            <article class="idea-card">
-                <h3>{escape(idea["title"])}</h3>
-                {_idea_body_html(idea)}
-                <p class="meta">
-                    {escape(idea["portfolio_name"] or "")} /
-                    {escape(idea["idea_agent_name"] or "")} /
-                    {escape(idea["creative_technique_name"] or "")}
-                </p>
-                {_critique_html(critiques.get(idea["id"]))}
-                <form class="inline-form" method="post" action="/ideas/{idea["id"]}/critique">
-                    <button type="submit">Run brutal critique</button>
-                </form>
-            </article>
-            """
-            for idea in ideas
-        )
+        ideas_html = _ideas_html(ideas, critiques, feedback_events)
         return page(
             "Ideas",
             f"""
@@ -428,6 +480,87 @@ def _critique_html(critique: sqlite3.Row | None) -> str:
         <p>{escape(raw_preview)}</p>
     </section>
     """
+
+
+def _ideas_html(
+    ideas: list[sqlite3.Row],
+    critiques: dict[int, sqlite3.Row],
+    feedback_events: dict[int, list[sqlite3.Row]],
+) -> str:
+    return "\n".join(
+        f"""
+        <article class="idea-card">
+            <h3>{escape(idea["title"])}</h3>
+            {_idea_body_html(idea)}
+            <p class="meta">
+                {escape(idea["portfolio_name"] or "")} /
+                {escape(idea["idea_agent_name"] or "")} /
+                {escape(idea["creative_technique_name"] or "")}
+            </p>
+            {_critique_html(critiques.get(idea["id"]))}
+            {_feedback_events_html(feedback_events.get(int(idea["id"]), []))}
+            <form class="inline-form" method="post" action="/ideas/{idea["id"]}/critique">
+                <button type="submit">Run brutal critique</button>
+            </form>
+            {_feedback_controls_html(int(idea["id"]))}
+        </article>
+        """
+        for idea in ideas
+    )
+
+
+def _feedback_controls_html(idea_id: int) -> str:
+    action_buttons = "\n".join(
+        f'<button type="submit" name="action" value="{escape(action)}">{escape(_label(action))}</button>'
+        for action in FEEDBACK_ACTIONS
+    )
+    reason_inputs = "\n".join(
+        f"""
+        <label class="chip">
+            <input type="checkbox" name="reason_chips" value="{escape(reason)}">
+            {escape(reason)}
+        </label>
+        """
+        for reason in REASON_CHIPS
+    )
+    return f"""
+    <form class="feedback-controls" method="post" action="/ideas/{idea_id}/feedback">
+        <div class="feedback-actions" aria-label="Feedback actions">
+            {action_buttons}
+        </div>
+        <div class="chips" aria-label="Reason chips">
+            {reason_inputs}
+        </div>
+    </form>
+    """
+
+
+def _feedback_events_html(events: list[sqlite3.Row]) -> str:
+    if not events:
+        return ""
+
+    items = "\n".join(
+        f"<li>{escape(_label(event['action']))}{_reason_suffix(event)}</li>"
+        for event in events[:5]
+    )
+    return f"""
+    <section class="feedback-events" aria-label="Feedback events">
+        <strong>Feedback</strong>
+        <ul>{items}</ul>
+    </section>
+    """
+
+
+def _reason_suffix(event: sqlite3.Row) -> str:
+    reasons = decode_reason_chips(event)
+    if not reasons:
+        return ""
+
+    return f" - {escape(', '.join(reasons))}"
+
+
+def _label(value: str) -> str:
+    return value.replace("_", " ")
 
 
 def _idea_body_html(idea: sqlite3.Row) -> str:
