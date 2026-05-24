@@ -24,11 +24,12 @@ from idea_forge.feedback import (
 from idea_forge.idea_generation import (
     IdeaGenerationClient,
     generate_and_store_ideas,
-    list_ideas,
     list_reference_rows,
 )
+from idea_forge.memory import create_memory, list_memories
 from idea_forge.ollama_client import OllamaClient
 from idea_forge.prompts import PromptRenderer
+from idea_forge.search import IdeaSearchFilters, search_ideas
 
 
 DEFAULT_DATABASE_PATH = Path("data") / "idea_forge.sqlite"
@@ -167,6 +168,31 @@ button {
     border-radius: 6px;
     padding: 18px;
 }
+.search-form {
+    background: #f8f9fa;
+    border: 1px solid #d9dce1;
+    border-radius: 6px;
+    margin-bottom: 18px;
+    padding: 14px;
+}
+.search-grid {
+    display: grid;
+    gap: 10px;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+.memory-list {
+    display: grid;
+    gap: 14px;
+    margin-top: 18px;
+}
+.memory-card {
+    border: 1px solid #d9dce1;
+    border-radius: 6px;
+    padding: 16px;
+}
+.memory-card h3 {
+    margin-top: 0;
+}
 """
 
 
@@ -187,6 +213,7 @@ def page(title: str, body: str, status_code: int = 200) -> HTMLResponse:
             <a href="/">Home</a>
             <a href="/ideas">Ideas</a>
             <a href="/ideas/generate">Generate</a>
+            <a href="/memories">Memories</a>
         </nav>
     </header>
     <main>
@@ -248,20 +275,54 @@ def create_app(
         )
 
     @app.get("/ideas", response_class=HTMLResponse)
-    def list_ideas_page() -> HTMLResponse:
+    def list_ideas_page(request: Request) -> HTMLResponse:
+        filters = _search_filters_from_query(request)
         with open_app_database() as connection:
-            ideas = list_ideas(connection)
+            portfolios = list_reference_rows(connection, "portfolios")
+            idea_agents = list_reference_rows(connection, "idea_agents")
+            creative_techniques = list_reference_rows(connection, "creative_techniques")
+            try:
+                ideas = search_ideas(connection, filters)
+            except ValueError as error:
+                return page(
+                    "Ideas",
+                    f"""
+                    <h2>Ideas</h2>
+                    <section class="empty" aria-label="Search failed">
+                        <p>Search failed.</p>
+                        <p class="muted">{escape(str(error))}</p>
+                    </section>
+                    """,
+                    status_code=400,
+                )
             critiques = latest_critiques_by_idea(connection)
             feedback_events = feedback_events_by_idea(connection)
 
+        search_form = _search_form_html(
+            filters,
+            portfolios,
+            idea_agents,
+            creative_techniques,
+        )
         if not ideas:
+            empty_title = (
+                "No matching ideas were found."
+                if _search_is_active(filters)
+                else "No ideas have been generated or stored yet."
+            )
+            empty_hint = (
+                "Try a broader search or generate a new stored idea."
+                if _search_is_active(filters)
+                else "Use the generate form to create the first stored idea."
+            )
             return page(
                 "Ideas",
-                """
+                f"""
                 <h2>Ideas</h2>
+                {search_form}
                 <section class="empty" aria-label="No ideas">
-                    <p>No ideas have been generated or stored yet.</p>
-                    <p class="muted">Use the generate form to create the first stored idea.</p>
+                    <p>{empty_title}</p>
+                    <p class="muted">{empty_hint}</p>
                 </section>
                 """,
             )
@@ -271,6 +332,7 @@ def create_app(
             "Ideas",
             f"""
             <h2>Ideas</h2>
+            {search_form}
             <section class="idea-list" aria-label="Stored ideas">
 {ideas_html}
             </section>
@@ -305,7 +367,7 @@ def create_app(
             )
 
         with open_app_database() as connection:
-            ideas = list_ideas(connection)
+            ideas = search_ideas(connection)
             critiques = latest_critiques_by_idea(connection)
             feedback_events = feedback_events_by_idea(connection)
 
@@ -344,7 +406,7 @@ def create_app(
             )
 
         with open_app_database() as connection:
-            ideas = list_ideas(connection)
+            ideas = search_ideas(connection)
             critiques = latest_critiques_by_idea(connection)
             feedback_events = feedback_events_by_idea(connection)
 
@@ -356,6 +418,55 @@ def create_app(
             <section class="idea-list" aria-label="Stored ideas">
 {ideas_html}
             </section>
+            """,
+        )
+
+    @app.get("/memories", response_class=HTMLResponse)
+    def memories_page() -> HTMLResponse:
+        with open_app_database() as connection:
+            memories = list_memories(connection)
+
+        return page(
+            "Memories",
+            f"""
+            <h2>Memory summaries</h2>
+            {_memory_form_html()}
+            {_memories_html(memories)}
+            """,
+        )
+
+    @app.post("/memories", response_class=HTMLResponse)
+    async def submit_memory(request: Request) -> HTMLResponse:
+        try:
+            form = parse_qs((await request.body()).decode("utf-8"))
+            with open_app_database() as connection:
+                create_memory(
+                    connection,
+                    memory_type=_form_value(form, "memory_type"),
+                    title=_form_value(form, "title"),
+                    content=_form_value(form, "content"),
+                )
+                memories = list_memories(connection)
+        except ValueError as error:
+            return page(
+                "Memories",
+                f"""
+                <h2>Memory summaries</h2>
+                <section class="empty" aria-label="Memory failed">
+                    <p>Memory was not recorded.</p>
+                    <p class="muted">{escape(str(error))}</p>
+                </section>
+                {_memory_form_html()}
+                """,
+                status_code=400,
+            )
+
+        return page(
+            "Memories",
+            f"""
+            <h2>Memory summaries</h2>
+            {_memory_form_html()}
+            {_memories_html(memories)}
             """,
         )
 
@@ -460,6 +571,151 @@ def _form_value(form: dict[str, list[str]], name: str) -> str:
         raise ValueError(f"Missing form field: {name}")
 
     return value
+
+
+def _search_filters_from_query(request: Request) -> IdeaSearchFilters:
+    return IdeaSearchFilters(
+        query=(request.query_params.get("q") or "").strip(),
+        portfolio_id=_optional_int(request.query_params.get("portfolio_id")),
+        idea_agent_id=_optional_int(request.query_params.get("idea_agent_id")),
+        creative_technique_id=_optional_int(
+            request.query_params.get("creative_technique_id")
+        ),
+        feedback_action=(request.query_params.get("feedback_action") or "").strip(),
+    )
+
+
+def _search_is_active(filters: IdeaSearchFilters) -> bool:
+    return any(
+        (
+            filters.query,
+            filters.portfolio_id is not None,
+            filters.idea_agent_id is not None,
+            filters.creative_technique_id is not None,
+            filters.feedback_action,
+        )
+    )
+
+
+def _optional_int(value: str | None) -> int | None:
+    if value is None or not value.strip():
+        return None
+
+    return int(value)
+
+
+def _search_form_html(
+    filters: IdeaSearchFilters,
+    portfolios: list[sqlite3.Row],
+    idea_agents: list[sqlite3.Row],
+    creative_techniques: list[sqlite3.Row],
+) -> str:
+    return f"""
+    <form class="search-form" method="get" action="/ideas" aria-label="Search ideas">
+        <div class="search-grid">
+            <label>
+                Keyword
+                <input name="q" value="{escape(filters.query)}" placeholder="Search stored ideas">
+            </label>
+            <label>
+                Portfolio
+                <select name="portfolio_id">
+                    <option value="">Any portfolio</option>
+                    {_selected_options(portfolios, filters.portfolio_id)}
+                </select>
+            </label>
+            <label>
+                Idea agent
+                <select name="idea_agent_id">
+                    <option value="">Any agent</option>
+                    {_selected_options(idea_agents, filters.idea_agent_id)}
+                </select>
+            </label>
+            <label>
+                Creative technique
+                <select name="creative_technique_id">
+                    <option value="">Any technique</option>
+                    {_selected_options(creative_techniques, filters.creative_technique_id)}
+                </select>
+            </label>
+            <label>
+                Feedback
+                <select name="feedback_action">
+                    <option value="">Any feedback</option>
+                    {_feedback_action_options(filters.feedback_action)}
+                </select>
+            </label>
+        </div>
+        <button type="submit">Search ideas</button>
+    </form>
+    """
+
+
+def _selected_options(items: list[sqlite3.Row], selected_id: int | None) -> str:
+    return "\n".join(
+        (
+            f'<option value="{item["id"]}" selected>{escape(item["name"])}</option>'
+            if selected_id == int(item["id"])
+            else f'<option value="{item["id"]}">{escape(item["name"])}</option>'
+        )
+        for item in items
+    )
+
+
+def _feedback_action_options(selected_action: str) -> str:
+    return "\n".join(
+        (
+            f'<option value="{escape(action)}" selected>{escape(_label(action))}</option>'
+            if selected_action == action
+            else f'<option value="{escape(action)}">{escape(_label(action))}</option>'
+        )
+        for action in FEEDBACK_ACTIONS
+    )
+
+
+def _memory_form_html() -> str:
+    return """
+    <form method="post" action="/memories">
+        <label>
+            Memory type
+            <input name="memory_type" placeholder="daily summary" required>
+        </label>
+        <label>
+            Title
+            <input name="title" required>
+        </label>
+        <label>
+            Content
+            <textarea name="content" required></textarea>
+        </label>
+        <button type="submit">Save memory</button>
+    </form>
+    """
+
+
+def _memories_html(memories: list[sqlite3.Row]) -> str:
+    if not memories:
+        return """
+        <section class="empty" aria-label="No memories">
+            <p>No memory summaries have been created yet.</p>
+        </section>
+        """
+
+    items = "\n".join(
+        f"""
+        <article class="memory-card">
+            <h3>{escape(memory["title"])}</h3>
+            <p class="meta">{escape(memory["memory_type"])} / {escape(memory["created_at"])}</p>
+            <p>{escape(memory["content"])}</p>
+        </article>
+        """
+        for memory in memories
+    )
+    return f"""
+    <section class="memory-list" aria-label="Memory summaries">
+        {items}
+    </section>
+    """
 
 
 def _critique_html(critique: sqlite3.Row | None) -> str:
