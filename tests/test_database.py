@@ -61,6 +61,18 @@ def test_generation_runs_schema_includes_manual_generation_metadata() -> None:
         }.issubset(column_names(connection, "generation_runs"))
 
 
+def test_ideas_schema_includes_structured_generation_fields() -> None:
+    with open_database() as connection:
+        initialize_schema(connection)
+
+        assert {
+            "summary",
+            "target_buyer",
+            "first_validation_step",
+            "why_it_fits",
+        }.issubset(column_names(connection, "ideas"))
+
+
 def test_critiques_schema_includes_score_columns() -> None:
     with open_database() as connection:
         initialize_schema(connection)

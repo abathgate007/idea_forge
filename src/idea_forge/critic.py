@@ -96,6 +96,10 @@ def get_idea_for_critique(connection: sqlite3.Connection, idea_id: int) -> sqlit
         SELECT
             ideas.id,
             ideas.title,
+            ideas.summary,
+            ideas.target_buyer,
+            ideas.first_validation_step,
+            ideas.why_it_fits,
             ideas.body,
             portfolios.name AS portfolio_name,
             idea_agents.name AS idea_agent_name,
@@ -182,7 +186,10 @@ def parse_scores(raw_output: str) -> dict[str, int]:
 def _idea_prompt_text(idea: sqlite3.Row) -> str:
     labels = [
         f"Title: {idea['title']}",
-        f"Body: {idea['body']}",
+        f"Summary: {idea['summary'] or idea['body']}",
+        f"Target buyer: {idea['target_buyer']}",
+        f"First validation step: {idea['first_validation_step']}",
+        f"Why it fits: {idea['why_it_fits']}",
     ]
     if idea["idea_agent_name"]:
         labels.append(f"Idea agent: {idea['idea_agent_name']}")
