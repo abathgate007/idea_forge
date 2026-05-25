@@ -59,6 +59,18 @@ def test_parse_generated_ideas_reads_strict_json_output() -> None:
     assert ideas[0].why_it_fits.startswith("It uses Andrew")
 
 
+def test_parse_generated_ideas_reads_markdown_fenced_json_output() -> None:
+    raw_output = f"```json\n{structured_output()}\n```"
+
+    ideas = parse_generated_ideas(raw_output)
+
+    assert [idea.title for idea in ideas] == [
+        "Local AppSec Workshop Wedge",
+        "Realtor Listing Prep Kit",
+    ]
+    assert ideas[0].target_buyer == "Security leaders at midsize SaaS companies"
+
+
 def test_parse_generated_ideas_falls_back_to_one_raw_output_idea() -> None:
     raw_output = "A detailed idea\n## Description\nDo this.\n## Validation\nTry that."
 

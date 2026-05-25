@@ -157,8 +157,9 @@ def parse_generated_ideas(raw_output: str) -> tuple[ParsedIdea, ...]:
     if not clean_output:
         return (_fallback_idea(""),)
 
+    json_output = _unwrap_markdown_json(clean_output)
     try:
-        payload = json.loads(clean_output)
+        payload = json.loads(json_output)
     except json.JSONDecodeError:
         return (_fallback_idea(clean_output),)
 
@@ -195,6 +196,19 @@ def parse_generated_ideas(raw_output: str) -> tuple[ParsedIdea, ...]:
         return (_fallback_idea(clean_output),)
 
     return tuple(parsed_ideas)
+
+
+def _unwrap_markdown_json(clean_output: str) -> str:
+    lines = clean_output.splitlines()
+    if len(lines) < 3:
+        return clean_output
+
+    opening_fence = lines[0].strip().lower()
+    closing_fence = lines[-1].strip()
+    if opening_fence not in {"```", "```json"} or closing_fence != "```":
+        return clean_output
+
+    return "\n".join(lines[1:-1]).strip()
 
 
 def list_ideas(connection: sqlite3.Connection) -> list[sqlite3.Row]:
