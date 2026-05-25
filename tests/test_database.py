@@ -12,6 +12,7 @@ EXPECTED_TABLES = {
     "generation_runs",
     "critiques",
     "feedback_events",
+    "memories",
 }
 
 
@@ -107,3 +108,15 @@ def test_feedback_events_schema_links_to_ideas() -> None:
             "reason_chips",
             "created_at",
         }.issubset(column_names(connection, "feedback_events"))
+
+
+def test_memories_schema_includes_manual_summary_fields() -> None:
+    with open_database() as connection:
+        initialize_schema(connection)
+
+        assert {
+            "memory_type",
+            "title",
+            "content",
+            "created_at",
+        }.issubset(column_names(connection, "memories"))
